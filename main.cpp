@@ -3,11 +3,15 @@
 #include <SoftwareSerial.h>
 #include <avr/pgmspace.h>
 
+constexpr bool USE_GSM = true;
+constexpr bool USE_BUZZER = true;
+
 constexpr uint8_t PHOTO_PIN = A1;
 constexpr uint8_t IR_PIN = 12;
 constexpr uint8_t DOOR_PIN = 2;
 constexpr uint8_t GAS_PIN = A3;
 constexpr uint8_t TEMP_PIN = A5;
+constexpr uint8_t BUZZER_PIN = A0;
 
 constexpr uint8_t GSM_RX = 10;
 constexpr uint8_t GSM_TX = 11;
@@ -31,6 +35,9 @@ constexpr uint8_t PIXELS5_PIN = 9;
 
 constexpr int TEMP_ALARM = 30;
 constexpr int TEMP_RESET = 27;
+constexpr int TEMP_SENSOR_MIN = -55;
+constexpr int TEMP_SENSOR_MAX = 150;
+
 constexpr int GAS_ALARM = 500;
 constexpr int GAS_RESET = 430;
 
@@ -52,6 +59,8 @@ constexpr unsigned long ALARM_STABLE_RESET_TIME = 10000;
 constexpr unsigned long SMS_REPEAT_TIME = 300000;
 constexpr unsigned long SERVO_WARNING_INTERVAL = 2000;
 constexpr unsigned long FIRE_FRAME_INTERVAL = 120;
+constexpr unsigned long FAULT_BLINK_INTERVAL = 500;
+constexpr unsigned long BUZZER_INTERVAL = 350;
 constexpr unsigned long GSM_BOOT_DELAY = 1000;
 
 const char PHONE[] = "+380XXXXXXXXX";
@@ -59,7 +68,15 @@ const char PHONE[] = "+380XXXXXXXXX";
 enum class SystemState : uint8_t {
   Normal,
   Motion,
-  Alarm
+  Alarm,
+  Fault
+};
+
+enum class AlarmReason : uint8_t {
+  None,
+  Gas,
+  Temperature,
+  GasAndTemperature
 };
 
 struct SensorData {
@@ -117,11 +134,18 @@ unsigned long alarmSafeSince = 0;
 unsigned long lastSmsTime = 0;
 unsigned long lastServoWarning = 0;
 unsigned long lastFireFrame = 0;
+unsigned long lastFaultBlink = 0;
+unsigned long lastBuzzerUpdate = 0;
 
 uint8_t fireOffset = 0;
+uint8_t exitOffset = 0;
 uint8_t wayStep = 0;
+
 bool doorIsOpen = false;
 bool alarmSmsWasSent = false;
+bool gsmReady = false;
+bool faultBlinkState = false;
+bool buzzerState = false;
 
 int tempFiltered = 0;
 int gasFiltered = 0;
@@ -165,7 +189,7 @@ void readSensors() {
   lightFiltered = smoothValue(lightFiltered, lightRaw, 3);
 
   sensors.temp = tempFiltered;
-  sensors.gas = gasFiltered;
+  sensors.gas = constrain(gasFiltered, 0, 1023);
   sensors.light = constrain(lightFiltered, 1, 255);
   sensors.motion = readMotionRaw();
 
@@ -174,12 +198,35 @@ void readSensors() {
   }
 }
 
+AlarmReason getAlarmReason() {
+  bool gasDanger = sensors.gas >= GAS_ALARM;
+  bool tempDanger = sensors.temp >= TEMP_ALARM;
+
+  if (gasDanger && tempDanger) {
+    return AlarmReason::GasAndTemperature;
+  }
+
+  if (gasDanger) {
+    return AlarmReason::Gas;
+  }
+
+  if (tempDanger) {
+    return AlarmReason::Temperature;
+  }
+
+  return AlarmReason::None;
+}
+
 bool alarmCondition() {
-  return sensors.temp >= TEMP_ALARM || sensors.gas >= GAS_ALARM;
+  return getAlarmReason() != AlarmReason::None;
 }
 
 bool safeCondition() {
   return sensors.temp <= TEMP_RESET && sensors.gas <= GAS_RESET;
+}
+
+bool sensorErrorCondition() {
+  return sensors.temp < TEMP_SENSOR_MIN || sensors.temp > TEMP_SENSOR_MAX;
 }
 
 void openDoor() {
@@ -213,21 +260,23 @@ void clearText() {
   }
 }
 
-void clearAllPixels() {
-  clearText();
-  clearWay();
+void clearLuster() {
   luster.clear();
   luster.show();
 }
 
-uint8_t adaptiveBrightness() {
-  uint8_t value = sensors.light;
+void clearAllPixels() {
+  clearText();
+  clearWay();
+  clearLuster();
+}
 
-  if (value < MIN_BRIGHTNESS) {
+uint8_t adaptiveBrightness() {
+  if (sensors.light < MIN_BRIGHTNESS) {
     return MIN_BRIGHTNESS;
   }
 
-  return value;
+  return sensors.light;
 }
 
 void updateLuster() {
@@ -248,14 +297,15 @@ void updateLuster() {
   luster.show();
 }
 
-void showExit() {
+void showExitFrame(uint8_t offset) {
   uint8_t brightness = adaptiveBrightness();
 
   for (uint8_t row = 0; row < LINE_COUNT; row++) {
     lines[row]->setBrightness(brightness);
 
     for (uint8_t col = 0; col < LINE_PIXELS; col++) {
-      uint8_t enabled = pgm_read_byte(&TEXT_EXIT[row][col]);
+      uint8_t index = (offset + col) % TEXT_EXIT_WIDTH;
+      uint8_t enabled = pgm_read_byte(&TEXT_EXIT[row][index]);
       lines[row]->setPixelColor(col, rgb(*lines[row], enabled ? 255 : 0, 0, 0));
     }
 
@@ -263,16 +313,22 @@ void showExit() {
   }
 }
 
+void animateExit() {
+  if (millis() - lastExitUpdate < EXIT_INTERVAL) {
+    return;
+  }
+
+  lastExitUpdate = millis();
+  showExitFrame(exitOffset);
+  exitOffset = (exitOffset + 1) % TEXT_EXIT_WIDTH;
+}
+
 void showGasLevel() {
   uint8_t level = constrain(map(sensors.gas, 200, 900, 0, WAY_COUNT), 0, WAY_COUNT);
   way.setBrightness(adaptiveBrightness());
 
   for (uint8_t i = 0; i < WAY_COUNT; i++) {
-    if (i < level) {
-      way.setPixelColor(i, rgb(way, 255, 80, 0));
-    } else {
-      way.setPixelColor(i, rgb(way, 0, 0, 0));
-    }
+    way.setPixelColor(i, i < level ? rgb(way, 255, 80, 0) : rgb(way, 0, 0, 0));
   }
 
   way.show();
@@ -323,6 +379,32 @@ void animateFire() {
   }
 }
 
+void stopBuzzer() {
+  if (USE_BUZZER) {
+    noTone(BUZZER_PIN);
+    buzzerState = false;
+  }
+}
+
+void updateAlarmBuzzer() {
+  if (!USE_BUZZER) {
+    return;
+  }
+
+  if (millis() - lastBuzzerUpdate < BUZZER_INTERVAL) {
+    return;
+  }
+
+  lastBuzzerUpdate = millis();
+  buzzerState = !buzzerState;
+
+  if (buzzerState) {
+    tone(BUZZER_PIN, 1000);
+  } else {
+    noTone(BUZZER_PIN);
+  }
+}
+
 void warningServoPulse() {
   if (millis() - lastServoWarning < SERVO_WARNING_INTERVAL) {
     return;
@@ -334,15 +416,61 @@ void warningServoPulse() {
   doorServo.write(DOOR_OPEN);
 }
 
-void gsmCommand(const __FlashStringHelper *cmd, unsigned long waitTime) {
+bool waitForGsm(const char *expected, unsigned long timeout) {
+  String response = "";
+  unsigned long start = millis();
+
+  while (millis() - start < timeout) {
+    while (gsm.available()) {
+      char c = gsm.read();
+      response += c;
+
+      if (response.indexOf(expected) >= 0) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+bool sendGsmCommand(const __FlashStringHelper *cmd, const char *expected, unsigned long timeout) {
+  while (gsm.available()) {
+    gsm.read();
+  }
+
   gsm.println(cmd);
-  delay(waitTime);
+  return waitForGsm(expected, timeout);
+}
+
+bool checkGsm() {
+  if (!USE_GSM) {
+    Serial.println(F("[GSM] Simulation mode enabled"));
+    return true;
+  }
+
+  Serial.println(F("[GSM] Checking module"));
+
+  bool ok = true;
+  ok = ok && sendGsmCommand(F("AT"), "OK", 2000);
+  ok = ok && sendGsmCommand(F("ATE0"), "OK", 2000);
+  ok = ok && sendGsmCommand(F("AT+CMGF=1"), "OK", 2000);
+  ok = ok && sendGsmCommand(F("AT+CPIN?"), "READY", 3000);
+  ok = ok && sendGsmCommand(F("AT+CSQ"), "OK", 2000);
+  ok = ok && sendGsmCommand(F("AT+CREG?"), "OK", 3000);
+
+  if (ok) {
+    Serial.println(F("[GSM] Module ready"));
+  } else {
+    Serial.println(F("[GSM] Module not ready"));
+  }
+
+  return ok;
 }
 
 void initGsm() {
   delay(GSM_BOOT_DELAY);
-  gsmCommand(F("AT"), 1000);
-  gsmCommand(F("AT+CMGF=1"), 1000);
+  gsmReady = checkGsm();
 }
 
 void sendSms(const __FlashStringHelper *message) {
@@ -352,20 +480,69 @@ void sendSms(const __FlashStringHelper *message) {
     return;
   }
 
-  gsmCommand(F("AT+CMGF=1"), 500);
+  if (!USE_GSM) {
+    Serial.print(F("[SMS SIMULATION] "));
+    Serial.println(message);
+    lastSmsTime = now;
+    alarmSmsWasSent = true;
+    return;
+  }
+
+  if (!gsmReady) {
+    gsmReady = checkGsm();
+
+    if (!gsmReady) {
+      Serial.println(F("[GSM] SMS was not sent"));
+      return;
+    }
+  }
+
+  Serial.println(F("[GSM] Sending SMS"));
+
+  if (!sendGsmCommand(F("AT+CMGF=1"), "OK", 2000)) {
+    gsmReady = false;
+    Serial.println(F("[GSM] SMS mode error"));
+    return;
+  }
+
+  while (gsm.available()) {
+    gsm.read();
+  }
 
   gsm.print(F("AT+CMGS=\""));
   gsm.print(PHONE);
   gsm.println(F("\""));
-  delay(700);
+
+  if (!waitForGsm(">", 3000)) {
+    gsmReady = false;
+    Serial.println(F("[GSM] Phone number command error"));
+    return;
+  }
 
   gsm.print(message);
   delay(300);
   gsm.write(26);
-  delay(4000);
 
-  lastSmsTime = now;
-  alarmSmsWasSent = true;
+  if (waitForGsm("OK", 12000)) {
+    Serial.println(F("[GSM] SMS sent"));
+    lastSmsTime = now;
+    alarmSmsWasSent = true;
+  } else {
+    gsmReady = false;
+    Serial.println(F("[GSM] SMS sending failed"));
+  }
+}
+
+void printAlarmReason(AlarmReason reason) {
+  if (reason == AlarmReason::GasAndTemperature) {
+    Serial.print(F("GAS_AND_TEMPERATURE"));
+  } else if (reason == AlarmReason::Gas) {
+    Serial.print(F("GAS"));
+  } else if (reason == AlarmReason::Temperature) {
+    Serial.print(F("TEMPERATURE"));
+  } else {
+    Serial.print(F("NONE"));
+  }
 }
 
 void printStatus() {
@@ -375,10 +552,14 @@ void printStatus() {
     Serial.print(F("NORMAL"));
   } else if (state == SystemState::Motion) {
     Serial.print(F("MOTION"));
-  } else {
+  } else if (state == SystemState::Alarm) {
     Serial.print(F("ALARM"));
+  } else {
+    Serial.print(F("FAULT"));
   }
 
+  Serial.print(F(" | Reason: "));
+  printAlarmReason(getAlarmReason());
   Serial.print(F(" | Temp: "));
   Serial.print(sensors.temp);
   Serial.print(F(" | Gas: "));
@@ -386,7 +567,9 @@ void printStatus() {
   Serial.print(F(" | Light: "));
   Serial.print(sensors.light);
   Serial.print(F(" | IR: "));
-  Serial.println(sensors.motion);
+  Serial.print(sensors.motion);
+  Serial.print(F(" | GSM: "));
+  Serial.println(gsmReady ? F("READY") : F("NOT_READY"));
 }
 
 void enterNormal() {
@@ -395,20 +578,33 @@ void enterNormal() {
   alarmSafeSince = 0;
   fireOffset = 0;
   wayStep = 0;
+  stopBuzzer();
   forceCloseDoor();
   clearWay();
+  Serial.println(F("[STATE] NORMAL"));
 }
 
 void enterMotion() {
   state = SystemState::Motion;
   openDoor();
   showMotionWay();
+  Serial.println(F("[STATE] MOTION"));
+}
+
+void enterFault() {
+  state = SystemState::Fault;
+  stopBuzzer();
+  forceCloseDoor();
+  clearWay();
+  clearText();
+  Serial.println(F("[STATE] FAULT"));
 }
 
 void enterAlarm() {
   state = SystemState::Alarm;
   openDoor();
   clearText();
+
   luster.setBrightness(MAX_BRIGHTNESS);
 
   for (uint8_t i = 0; i < LUSTER_COUNT; i++) {
@@ -417,11 +613,17 @@ void enterAlarm() {
 
   luster.show();
 
-  if (sensors.gas >= GAS_ALARM && sensors.temp >= TEMP_ALARM) {
+  AlarmReason reason = getAlarmReason();
+
+  Serial.print(F("[STATE] ALARM | Reason: "));
+  printAlarmReason(reason);
+  Serial.println();
+
+  if (reason == AlarmReason::GasAndTemperature) {
     sendSms(F("Увага! Виявлено дим або газ і високу температуру."));
-  } else if (sensors.gas >= GAS_ALARM) {
+  } else if (reason == AlarmReason::Gas) {
     sendSms(F("Увага! Виявлено дим або газ у приміщенні."));
-  } else {
+  } else if (reason == AlarmReason::Temperature) {
     sendSms(F("Увага! Температура перевищила безпечний рівень."));
   }
 }
@@ -434,9 +636,11 @@ void handleNormal() {
     showGasLevel();
   }
 
-  if (millis() - lastExitUpdate >= EXIT_INTERVAL) {
-    lastExitUpdate = millis();
-    showExit();
+  animateExit();
+
+  if (sensorErrorCondition()) {
+    enterFault();
+    return;
   }
 
   if (alarmCondition()) {
@@ -454,6 +658,11 @@ void handleMotion() {
   updateLuster();
   showMotionWay();
 
+  if (sensorErrorCondition()) {
+    enterFault();
+    return;
+  }
+
   if (alarmCondition()) {
     enterAlarm();
     return;
@@ -463,6 +672,7 @@ void handleMotion() {
     clearWay();
     forceCloseDoor();
     state = SystemState::Normal;
+    Serial.println(F("[STATE] NORMAL"));
   }
 }
 
@@ -470,13 +680,21 @@ void handleAlarm() {
   openDoor();
   warningServoPulse();
   animateFire();
+  updateAlarmBuzzer();
 
-  if (sensors.gas >= GAS_ALARM && sensors.temp >= TEMP_ALARM) {
+  AlarmReason reason = getAlarmReason();
+
+  if (reason == AlarmReason::GasAndTemperature) {
     sendSms(F("Увага! Небезпека триває: дим або газ і висока температура."));
-  } else if (sensors.gas >= GAS_ALARM) {
+  } else if (reason == AlarmReason::Gas) {
     sendSms(F("Увага! Небезпека триває: дим або газ у приміщенні."));
-  } else if (sensors.temp >= TEMP_ALARM) {
+  } else if (reason == AlarmReason::Temperature) {
     sendSms(F("Увага! Небезпека триває: висока температура."));
+  }
+
+  if (sensorErrorCondition()) {
+    enterFault();
+    return;
   }
 
   if (safeCondition()) {
@@ -492,6 +710,25 @@ void handleAlarm() {
   }
 }
 
+void handleFault() {
+  if (millis() - lastFaultBlink >= FAULT_BLINK_INTERVAL) {
+    lastFaultBlink = millis();
+    faultBlinkState = !faultBlinkState;
+
+    luster.setBrightness(MAX_BRIGHTNESS);
+
+    for (uint8_t i = 0; i < LUSTER_COUNT; i++) {
+      luster.setPixelColor(i, faultBlinkState ? rgb(luster, 255, 0, 0) : rgb(luster, 0, 0, 0));
+    }
+
+    luster.show();
+  }
+
+  if (!sensorErrorCondition()) {
+    enterNormal();
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   gsm.begin(9600);
@@ -500,6 +737,11 @@ void setup() {
   pinMode(IR_PIN, INPUT);
   pinMode(GAS_PIN, INPUT);
   pinMode(TEMP_PIN, INPUT);
+
+  if (USE_BUZZER) {
+    pinMode(BUZZER_PIN, OUTPUT);
+    noTone(BUZZER_PIN);
+  }
 
   luster.begin();
   way.begin();
@@ -510,11 +752,7 @@ void setup() {
     lines[i]->show();
   }
 
-  luster.clear();
-  luster.show();
-
-  way.clear();
-  way.show();
+  clearAllPixels();
 
   doorServo.attach(DOOR_PIN);
   forceCloseDoor();
@@ -523,7 +761,10 @@ void setup() {
   gasFiltered = readGasRaw();
   lightFiltered = readLightRaw();
 
+  readSensors();
   initGsm();
+
+  Serial.println(F("[SYSTEM] Started"));
 }
 
 void loop() {
@@ -550,6 +791,10 @@ void loop() {
 
     case SystemState::Alarm:
       handleAlarm();
+      break;
+
+    case SystemState::Fault:
+      handleFault();
       break;
   }
 }
