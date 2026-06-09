@@ -1,289 +1,555 @@
-#define photoSensor A1 
-#define IKDatchik 12
-#define doorPin 2
-#define gasPin A3
-#define tempPin A5
-
-#define doorPixelsPin 7
-#define doorPixelsCount 4
-
-#define tempFire 30
-#define gasFire 500
-
 #include <Adafruit_NeoPixel.h>
 #include <Servo.h>
 #include <SoftwareSerial.h>
-Servo ServoDoor;
+#include <avr/pgmspace.h>
 
-SoftwareSerial gsm(10, 11);
+constexpr uint8_t PHOTO_PIN = A1;
+constexpr uint8_t IR_PIN = 12;
+constexpr uint8_t DOOR_PIN = 2;
+constexpr uint8_t GAS_PIN = A3;
+constexpr uint8_t TEMP_PIN = A5;
 
-#define lusterPin 3
-#define lusterCount 12
-Adafruit_NeoPixel luster = Adafruit_NeoPixel(lusterCount, lusterPin, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel wayPixels = Adafruit_NeoPixel(doorPixelsCount, doorPixelsPin, NEO_GRB + NEO_KHZ800);
+constexpr uint8_t GSM_RX = 10;
+constexpr uint8_t GSM_TX = 11;
 
-#define pixels1Pin 6
-#define pixels2Pin 5
-#define pixels3Pin 4
-#define pixels4Pin 8
-#define pixels5Pin 9
-#define pixelsCount 4
-#define sizeLines 5
+constexpr uint8_t LUSTER_PIN = 3;
+constexpr uint8_t LUSTER_COUNT = 12;
 
-Adafruit_NeoPixel pixels1 = Adafruit_NeoPixel(pixelsCount, pixels1Pin, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel pixels2 = Adafruit_NeoPixel(pixelsCount, pixels2Pin, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel pixels3 = Adafruit_NeoPixel(pixelsCount, pixels3Pin, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel pixels4 = Adafruit_NeoPixel(pixelsCount, pixels4Pin, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel pixels5 = Adafruit_NeoPixel(pixelsCount, pixels5Pin, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel lines[5] = {pixels1, pixels2, pixels3, pixels4, pixels5};
+constexpr uint8_t WAY_PIN = 7;
+constexpr uint8_t WAY_COUNT = 4;
 
-int TEXT_FIRE[5][27] = {
+constexpr uint8_t LINE_COUNT = 5;
+constexpr uint8_t LINE_PIXELS = 4;
+constexpr uint8_t TEXT_FIRE_WIDTH = 27;
+constexpr uint8_t TEXT_EXIT_WIDTH = 16;
+
+constexpr uint8_t PIXELS1_PIN = 6;
+constexpr uint8_t PIXELS2_PIN = 5;
+constexpr uint8_t PIXELS3_PIN = 4;
+constexpr uint8_t PIXELS4_PIN = 8;
+constexpr uint8_t PIXELS5_PIN = 9;
+
+constexpr int TEMP_ALARM = 30;
+constexpr int TEMP_RESET = 27;
+constexpr int GAS_ALARM = 500;
+constexpr int GAS_RESET = 430;
+
+constexpr uint8_t DOOR_CLOSED = 0;
+constexpr uint8_t DOOR_OPEN = 90;
+constexpr uint8_t DOOR_WARNING = 30;
+
+constexpr uint8_t MIN_BRIGHTNESS = 20;
+constexpr uint8_t MAX_BRIGHTNESS = 255;
+constexpr uint8_t NIGHT_LUSTER_BRIGHTNESS = 45;
+constexpr uint8_t DAY_LUSTER_BRIGHTNESS = 30;
+
+constexpr unsigned long SENSOR_INTERVAL = 250;
+constexpr unsigned long STATUS_INTERVAL = 1000;
+constexpr unsigned long EXIT_INTERVAL = 300;
+constexpr unsigned long GAS_INTERVAL = 250;
+constexpr unsigned long MOTION_HOLD_TIME = 2500;
+constexpr unsigned long ALARM_STABLE_RESET_TIME = 10000;
+constexpr unsigned long SMS_REPEAT_TIME = 300000;
+constexpr unsigned long SERVO_WARNING_INTERVAL = 2000;
+constexpr unsigned long FIRE_FRAME_INTERVAL = 120;
+constexpr unsigned long GSM_BOOT_DELAY = 1000;
+
+const char PHONE[] = "+380XXXXXXXXX";
+
+enum class SystemState : uint8_t {
+  Normal,
+  Motion,
+  Alarm
+};
+
+struct SensorData {
+  int temp = 0;
+  int gas = 0;
+  uint8_t light = 255;
+  bool motion = false;
+};
+
+Servo doorServo;
+SoftwareSerial gsm(GSM_RX, GSM_TX);
+
+Adafruit_NeoPixel luster(LUSTER_COUNT, LUSTER_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel way(WAY_COUNT, WAY_PIN, NEO_GRB + NEO_KHZ800);
+
+Adafruit_NeoPixel line0(LINE_PIXELS, PIXELS1_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel line1(LINE_PIXELS, PIXELS2_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel line2(LINE_PIXELS, PIXELS3_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel line3(LINE_PIXELS, PIXELS4_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel line4(LINE_PIXELS, PIXELS5_PIN, NEO_GRB + NEO_KHZ800);
+
+Adafruit_NeoPixel *lines[LINE_COUNT] = {
+  &line0,
+  &line1,
+  &line2,
+  &line3,
+  &line4
+};
+
+const uint8_t TEXT_FIRE[LINE_COUNT][TEXT_FIRE_WIDTH] PROGMEM = {
   {0,1,1,1,0,0,1,1,1,0,0,1,0,1,0,1,0,0,0,1,0,0,0,1,1,1,0},
   {0,1,0,1,0,0,1,0,1,0,0,0,1,1,1,0,0,0,1,0,1,0,0,1,0,1,0},
   {0,1,0,1,0,0,1,0,1,0,0,0,0,1,0,0,0,0,1,1,1,0,0,1,1,1,0},
   {0,1,0,1,0,0,1,0,1,0,0,0,1,1,1,0,0,0,1,0,1,0,0,1,0,0,0},
-  {0,1,0,1,0,0,1,1,1,0,0,1,0,1,0,1,0,0,1,0,1,0,0,1,0,0,0},
+  {0,1,0,1,0,0,1,1,1,0,0,1,0,1,0,1,0,0,1,0,1,0,0,1,0,0,0}
 };
 
-int TEXT_EXIT[5][27] = {
+const uint8_t TEXT_EXIT[LINE_COUNT][TEXT_EXIT_WIDTH] PROGMEM = {
   {1,1,1,0,1,0,0,0,1,0,1,0,1,1,1,0},
   {1,0,0,0,0,1,0,1,0,0,0,0,0,1,0,0},
   {1,1,1,0,0,0,1,0,0,0,1,0,0,1,0,0},
   {1,0,0,0,0,1,0,1,0,0,1,0,0,1,0,0},
-  {1,1,1,0,1,0,0,0,1,0,1,0,0,1,0,0},
+  {1,1,1,0,1,0,0,0,1,0,1,0,0,1,0,0}
 };
 
-void setup() {
-  Serial.begin(115200);
-  gsm.begin(9600);
-  delay(1000);
-  gsm.println("AT");
-  delay(1000);
-  gsm.println("AT+CMGF=1");
-  delay(1000);
-  
-  pinMode(IKDatchik, INPUT);
-  pinMode(tempPin, INPUT);
-  pinMode(gasPin, INPUT); 
+SystemState state = SystemState::Normal;
+SensorData sensors;
 
-  pinMode(pixels1Pin, OUTPUT); pinMode(pixels2Pin, OUTPUT);
-  pinMode(pixels3Pin, OUTPUT); pinMode(pixels4Pin, OUTPUT);
-  pinMode(pixels5Pin, OUTPUT); pinMode(doorPixelsPin, OUTPUT);
+unsigned long lastSensorRead = 0;
+unsigned long lastStatusPrint = 0;
+unsigned long lastExitUpdate = 0;
+unsigned long lastGasUpdate = 0;
+unsigned long lastMotionTime = 0;
+unsigned long alarmSafeSince = 0;
+unsigned long lastSmsTime = 0;
+unsigned long lastServoWarning = 0;
+unsigned long lastFireFrame = 0;
 
-  wayPixels.begin();
-  for (int i = 0; i < sizeLines; i++) {
-    lines[i].begin();
+uint8_t fireOffset = 0;
+uint8_t wayStep = 0;
+bool doorIsOpen = false;
+bool alarmSmsWasSent = false;
+
+int tempFiltered = 0;
+int gasFiltered = 0;
+int lightFiltered = 255;
+
+uint32_t rgb(Adafruit_NeoPixel &strip, uint8_t r, uint8_t g, uint8_t b) {
+  return strip.Color(r, g, b);
+}
+
+int smoothValue(int current, int next, uint8_t factor) {
+  return ((current * factor) + next) / (factor + 1);
+}
+
+int readTemperatureRaw() {
+  int raw = analogRead(TEMP_PIN);
+  float voltage = raw * 5.0 / 1023.0;
+  return round((voltage - 0.5) * 100.0);
+}
+
+int readGasRaw() {
+  return analogRead(GAS_PIN);
+}
+
+uint8_t readLightRaw() {
+  int raw = analogRead(PHOTO_PIN);
+  int value = map(raw, 1017, 348, 255, 1);
+  return constrain(value, 1, 255);
+}
+
+bool readMotionRaw() {
+  return digitalRead(IR_PIN) == HIGH;
+}
+
+void readSensors() {
+  int tempRaw = readTemperatureRaw();
+  int gasRaw = readGasRaw();
+  int lightRaw = readLightRaw();
+
+  tempFiltered = smoothValue(tempFiltered, tempRaw, 3);
+  gasFiltered = smoothValue(gasFiltered, gasRaw, 4);
+  lightFiltered = smoothValue(lightFiltered, lightRaw, 3);
+
+  sensors.temp = tempFiltered;
+  sensors.gas = gasFiltered;
+  sensors.light = constrain(lightFiltered, 1, 255);
+  sensors.motion = readMotionRaw();
+
+  if (sensors.motion) {
+    lastMotionTime = millis();
   }
-
-  luster.begin();
-  ServoDoor.attach(doorPin);
-  closeDoor();
 }
 
-void sendAlertSMS(String message) {
-  gsm.println("AT+CMGF=1");
-  delay(1000);
-  gsm.println("AT+CMGS=\"+380XXXXXXXXX\"");
-  delay(1000);
-  gsm.print(message);
-  delay(500);
-  gsm.write(26);
-  delay(5000);
+bool alarmCondition() {
+  return sensors.temp >= TEMP_ALARM || sensors.gas >= GAS_ALARM;
 }
 
-int getTemperature() {
-  int reading = analogRead(tempPin);
-  float voltage = reading * (5.0 / 1023.0);
-  float temperatureC = (voltage - 0.5) * 100.0;
-  return (int)temperatureC;
-}
-
-int getPhoto() {
-  return map(analogRead(photoSensor), 1017, 348, 255, 1);
-}
-
-int getIK() {
-  return digitalRead(IKDatchik);
-}
-
-int getGas() {
-  return analogRead(gasPin);
+bool safeCondition() {
+  return sensors.temp <= TEMP_RESET && sensors.gas <= GAS_RESET;
 }
 
 void openDoor() {
-  ServoDoor.write(90);
+  if (!doorIsOpen) {
+    doorServo.write(DOOR_OPEN);
+    doorIsOpen = true;
+  }
 }
 
 void closeDoor() {
-  ServoDoor.write(0);
-}
-
-void textOFF() {
-  for (int i = 0; i < sizeLines; i++) {
-    for (int j = 0; j < pixelsCount; j++) {
-      lines[i].setPixelColor(j, lines[i].Color(0, 0, 0));
-    }
-    lines[i].show();
+  if (doorIsOpen) {
+    doorServo.write(DOOR_CLOSED);
+    doorIsOpen = false;
   }
 }
 
-void textExit() {
-  int photo = getPhoto();
-  for (int l = 0; l < sizeLines; l++) {
-    lines[l].setBrightness(photo);
-    for (int j = 0; j < pixelsCount; j++) {
-      lines[l].setPixelColor(j, lines[l].Color(255 * TEXT_EXIT[l][j], 0, 0));
-    }
-    lines[l].show();  
-  }
-  for (int i = 0; i < doorPixelsCount; i++) {
-    wayPixels.setPixelColor(i, wayPixels.Color(0, 0, 0));
-  }
-  wayPixels.show();
+void forceCloseDoor() {
+  doorServo.write(DOOR_CLOSED);
+  doorIsOpen = false;
 }
 
-void turnOnWayFull() {
-  for (int i = 0; i < lusterCount; i++) {
-    luster.setPixelColor(i, luster.Color(233, 250, 47));
+void clearWay() {
+  way.clear();
+  way.show();
+}
+
+void clearText() {
+  for (uint8_t i = 0; i < LINE_COUNT; i++) {
+    lines[i]->clear();
+    lines[i]->show();
   }
+}
+
+void clearAllPixels() {
+  clearText();
+  clearWay();
+  luster.clear();
   luster.show();
-
-  while (getGas() > gasFire || getTemperature() > tempFire) {
-    int turn = -1;
-    for (int i = 0; i < 27 - pixelsCount; i++) {
-      for (int l = 0; l < sizeLines; l++) {
-        for (int j = 0; j < pixelsCount; j++) {
-          lines[l].setPixelColor(j, lines[l].Color(255 * TEXT_FIRE[l][i + j], 0, 0));
-        }
-        turn = (turn + 1) % doorPixelsCount;
-        wayPixels.setPixelColor(turn, wayPixels.Color(255, 0, 0));
-        lines[l].show();
-        wayPixels.show();
-        delay(100);
-        wayPixels.setPixelColor(turn, wayPixels.Color(0, 0, 0));
-        wayPixels.show();
-      }
-    }
-  }
-
-  closeDoor();
 }
 
-void goodBye() {
-  while (getIK()) {
-    openDoor();
-    int photo = getPhoto();
-    wayPixels.setBrightness(photo);
-    for (int i = 0; i < sizeLines; i++) {
-      lines[i].setBrightness(photo);
-      lines[i].show();
-    }
-    for (int i = 0; i < doorPixelsCount; i++) {
-      wayPixels.setPixelColor(i, wayPixels.Color(255, 0, 0));
-      wayPixels.show();
-    }
-    delay(100);
+uint8_t adaptiveBrightness() {
+  uint8_t value = sensors.light;
+
+  if (value < MIN_BRIGHTNESS) {
+    return MIN_BRIGHTNESS;
   }
-  wayPixels.setBrightness(255);
-  for (int i = 0; i < doorPixelsCount; i++) {
-    wayPixels.setPixelColor(i, wayPixels.Color(0, 0, 0));
-  }
-  wayPixels.show();
-  closeDoor();
+
+  return value;
 }
 
-void adjustNightBrightness() {
-  int photo = getPhoto();
-  if (photo > 220) {
-    luster.setBrightness(30);
-  } else if (photo < 30) {
-    luster.setBrightness(50);
-  } else {
-    luster.setBrightness(photo);
+void updateLuster() {
+  uint8_t brightness = adaptiveBrightness();
+
+  if (sensors.light > 220) {
+    brightness = DAY_LUSTER_BRIGHTNESS;
+  } else if (sensors.light < 35) {
+    brightness = NIGHT_LUSTER_BRIGHTNESS;
+  }
+
+  luster.setBrightness(brightness);
+
+  for (uint8_t i = 0; i < LUSTER_COUNT; i++) {
+    luster.setPixelColor(i, rgb(luster, 233, 250, 47));
+  }
+
+  luster.show();
+}
+
+void showExit() {
+  uint8_t brightness = adaptiveBrightness();
+
+  for (uint8_t row = 0; row < LINE_COUNT; row++) {
+    lines[row]->setBrightness(brightness);
+
+    for (uint8_t col = 0; col < LINE_PIXELS; col++) {
+      uint8_t enabled = pgm_read_byte(&TEXT_EXIT[row][col]);
+      lines[row]->setPixelColor(col, rgb(*lines[row], enabled ? 255 : 0, 0, 0));
+    }
+
+    lines[row]->show();
+  }
+}
+
+void showGasLevel() {
+  uint8_t level = constrain(map(sensors.gas, 200, 900, 0, WAY_COUNT), 0, WAY_COUNT);
+  way.setBrightness(adaptiveBrightness());
+
+  for (uint8_t i = 0; i < WAY_COUNT; i++) {
+    if (i < level) {
+      way.setPixelColor(i, rgb(way, 255, 80, 0));
+    } else {
+      way.setPixelColor(i, rgb(way, 0, 0, 0));
+    }
+  }
+
+  way.show();
+}
+
+void showMotionWay() {
+  way.setBrightness(adaptiveBrightness());
+
+  for (uint8_t i = 0; i < WAY_COUNT; i++) {
+    way.setPixelColor(i, rgb(way, 255, 0, 0));
+  }
+
+  way.show();
+}
+
+void showFireFrame(uint8_t offset) {
+  for (uint8_t row = 0; row < LINE_COUNT; row++) {
+    lines[row]->setBrightness(MAX_BRIGHTNESS);
+
+    for (uint8_t col = 0; col < LINE_PIXELS; col++) {
+      uint8_t enabled = pgm_read_byte(&TEXT_FIRE[row][offset + col]);
+      lines[row]->setPixelColor(col, rgb(*lines[row], enabled ? 255 : 0, 0, 0));
+    }
+
+    lines[row]->show();
+  }
+}
+
+void animateFire() {
+  if (millis() - lastFireFrame < FIRE_FRAME_INTERVAL) {
+    return;
+  }
+
+  lastFireFrame = millis();
+
+  showFireFrame(fireOffset);
+
+  way.clear();
+  way.setBrightness(MAX_BRIGHTNESS);
+  way.setPixelColor(wayStep, rgb(way, 255, 0, 0));
+  way.show();
+
+  wayStep = (wayStep + 1) % WAY_COUNT;
+  fireOffset++;
+
+  if (fireOffset > TEXT_FIRE_WIDTH - LINE_PIXELS) {
+    fireOffset = 0;
   }
 }
 
 void warningServoPulse() {
-  for (int i = 0; i < 3; i++) {
-    ServoDoor.write(30);
-    delay(100);
-    ServoDoor.write(0);
-    delay(100);
+  if (millis() - lastServoWarning < SERVO_WARNING_INTERVAL) {
+    return;
+  }
+
+  lastServoWarning = millis();
+  doorServo.write(DOOR_WARNING);
+  delay(100);
+  doorServo.write(DOOR_OPEN);
+}
+
+void gsmCommand(const __FlashStringHelper *cmd, unsigned long waitTime) {
+  gsm.println(cmd);
+  delay(waitTime);
+}
+
+void initGsm() {
+  delay(GSM_BOOT_DELAY);
+  gsmCommand(F("AT"), 1000);
+  gsmCommand(F("AT+CMGF=1"), 1000);
+}
+
+void sendSms(const __FlashStringHelper *message) {
+  unsigned long now = millis();
+
+  if (alarmSmsWasSent && now - lastSmsTime < SMS_REPEAT_TIME) {
+    return;
+  }
+
+  gsmCommand(F("AT+CMGF=1"), 500);
+
+  gsm.print(F("AT+CMGS=\""));
+  gsm.print(PHONE);
+  gsm.println(F("\""));
+  delay(700);
+
+  gsm.print(message);
+  delay(300);
+  gsm.write(26);
+  delay(4000);
+
+  lastSmsTime = now;
+  alarmSmsWasSent = true;
+}
+
+void printStatus() {
+  Serial.print(F("State: "));
+
+  if (state == SystemState::Normal) {
+    Serial.print(F("NORMAL"));
+  } else if (state == SystemState::Motion) {
+    Serial.print(F("MOTION"));
+  } else {
+    Serial.print(F("ALARM"));
+  }
+
+  Serial.print(F(" | Temp: "));
+  Serial.print(sensors.temp);
+  Serial.print(F(" | Gas: "));
+  Serial.print(sensors.gas);
+  Serial.print(F(" | Light: "));
+  Serial.print(sensors.light);
+  Serial.print(F(" | IR: "));
+  Serial.println(sensors.motion);
+}
+
+void enterNormal() {
+  state = SystemState::Normal;
+  alarmSmsWasSent = false;
+  alarmSafeSince = 0;
+  fireOffset = 0;
+  wayStep = 0;
+  forceCloseDoor();
+  clearWay();
+}
+
+void enterMotion() {
+  state = SystemState::Motion;
+  openDoor();
+  showMotionWay();
+}
+
+void enterAlarm() {
+  state = SystemState::Alarm;
+  openDoor();
+  clearText();
+  luster.setBrightness(MAX_BRIGHTNESS);
+
+  for (uint8_t i = 0; i < LUSTER_COUNT; i++) {
+    luster.setPixelColor(i, rgb(luster, 255, 255, 255));
+  }
+
+  luster.show();
+
+  if (sensors.gas >= GAS_ALARM && sensors.temp >= TEMP_ALARM) {
+    sendSms(F("Увага! Виявлено дим або газ і високу температуру."));
+  } else if (sensors.gas >= GAS_ALARM) {
+    sendSms(F("Увага! Виявлено дим або газ у приміщенні."));
+  } else {
+    sendSms(F("Увага! Температура перевищила безпечний рівень."));
   }
 }
 
-void blinkFireText(int times) {
-  for (int t = 0; t < times; t++) {
-    textOFF();
-    delay(300);
-    for (int l = 0; l < sizeLines; l++) {
-      for (int j = 0; j < pixelsCount; j++) {
-        lines[l].setPixelColor(j, lines[l].Color(255 * TEXT_FIRE[l][j], 0, 0));
-      }
-      lines[l].show();
+void handleNormal() {
+  updateLuster();
+
+  if (millis() - lastGasUpdate >= GAS_INTERVAL) {
+    lastGasUpdate = millis();
+    showGasLevel();
+  }
+
+  if (millis() - lastExitUpdate >= EXIT_INTERVAL) {
+    lastExitUpdate = millis();
+    showExit();
+  }
+
+  if (alarmCondition()) {
+    enterAlarm();
+    return;
+  }
+
+  if (sensors.motion) {
+    enterMotion();
+    return;
+  }
+}
+
+void handleMotion() {
+  updateLuster();
+  showMotionWay();
+
+  if (alarmCondition()) {
+    enterAlarm();
+    return;
+  }
+
+  if (millis() - lastMotionTime > MOTION_HOLD_TIME) {
+    clearWay();
+    forceCloseDoor();
+    state = SystemState::Normal;
+  }
+}
+
+void handleAlarm() {
+  openDoor();
+  warningServoPulse();
+  animateFire();
+
+  if (sensors.gas >= GAS_ALARM && sensors.temp >= TEMP_ALARM) {
+    sendSms(F("Увага! Небезпека триває: дим або газ і висока температура."));
+  } else if (sensors.gas >= GAS_ALARM) {
+    sendSms(F("Увага! Небезпека триває: дим або газ у приміщенні."));
+  } else if (sensors.temp >= TEMP_ALARM) {
+    sendSms(F("Увага! Небезпека триває: висока температура."));
+  }
+
+  if (safeCondition()) {
+    if (alarmSafeSince == 0) {
+      alarmSafeSince = millis();
     }
-    delay(300);
+
+    if (millis() - alarmSafeSince >= ALARM_STABLE_RESET_TIME) {
+      enterNormal();
+    }
+  } else {
+    alarmSafeSince = 0;
   }
 }
 
-void gasDangerLevel(int gasVal) {
-  int level = map(gasVal, 200, 900, 0, doorPixelsCount);
-  for (int i = 0; i < doorPixelsCount; i++) {
-    if (i < level)
-      wayPixels.setPixelColor(i, wayPixels.Color(255, 0, 0));
-    else
-      wayPixels.setPixelColor(i, wayPixels.Color(0, 0, 0));
+void setup() {
+  Serial.begin(115200);
+  gsm.begin(9600);
+
+  pinMode(PHOTO_PIN, INPUT);
+  pinMode(IR_PIN, INPUT);
+  pinMode(GAS_PIN, INPUT);
+  pinMode(TEMP_PIN, INPUT);
+
+  luster.begin();
+  way.begin();
+
+  for (uint8_t i = 0; i < LINE_COUNT; i++) {
+    lines[i]->begin();
+    lines[i]->clear();
+    lines[i]->show();
   }
-  wayPixels.show();
+
+  luster.clear();
+  luster.show();
+
+  way.clear();
+  way.show();
+
+  doorServo.attach(DOOR_PIN);
+  forceCloseDoor();
+
+  tempFiltered = readTemperatureRaw();
+  gasFiltered = readGasRaw();
+  lightFiltered = readLightRaw();
+
+  initGsm();
 }
 
 void loop() {
-  int temp = getTemperature();
-  int photo = getPhoto();
-  int gas = getGas();
-  int IK = getIK();
+  unsigned long now = millis();
 
-  Serial.print("Temp: "); Serial.print(temp);
-  Serial.print(" | Light: "); Serial.print(photo);
-  Serial.print(" | Gas: "); Serial.print(gas);
-  Serial.print(" | IR: "); Serial.println(IK);
-
-  adjustNightBrightness();
-  
-  for (int i = 0; i < lusterCount; i++) {
-    luster.setPixelColor(i, luster.Color(233, 250, 47));
-  }
-  luster.show();
-
-  gasDangerLevel(gas);
-
-  if (temp > tempFire || gas > gasFire) {
-    openDoor();
-    textOFF();
-    for (int i = 0; i < sizeLines; i++) {
-      lines[i].setBrightness(255);
-    }
-    luster.setBrightness(255);
-
-    if (gas > gasFire) {
-      Serial.println("FIRE! Reason: smoke (gas)");
-      sendAlertSMS("Увага! Виявлено дим у приміщенні.");
-    } else if (temp > tempFire) {
-      Serial.println("FIRE! Reason: high temperature");
-      sendAlertSMS("Увага! Температура перевищила безпечний рівень.");
-    }
-
-    warningServoPulse();
-    blinkFireText(5);
-    turnOnWayFull();
-  } else if (IK == 1) {
-    Serial.println("Motion detected opening door.");
-    delay(500);
-    goodBye();
-  } else {
-    Serial.println("Normal mode displaying EXIT.");
-    textExit();
+  if (now - lastSensorRead >= SENSOR_INTERVAL) {
+    lastSensorRead = now;
+    readSensors();
   }
 
-  delay(400);
+  if (now - lastStatusPrint >= STATUS_INTERVAL) {
+    lastStatusPrint = now;
+    printStatus();
+  }
+
+  switch (state) {
+    case SystemState::Normal:
+      handleNormal();
+      break;
+
+    case SystemState::Motion:
+      handleMotion();
+      break;
+
+    case SystemState::Alarm:
+      handleAlarm();
+      break;
+  }
 }
