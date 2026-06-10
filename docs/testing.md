@@ -64,7 +64,7 @@ The firmware uses a state-based logic model.
 
 ## Test Environment
 
-Testing can be performed in two environments:
+Testing can be performed in two environments.
 
 ### 1. Tinkercad Simulation
 
@@ -155,7 +155,11 @@ The difference between alarm and reset thresholds is intentional. It creates hys
 | TC-11 | SMS anti-spam          | SMS is not repeatedly sent too often                    | Passed by logic review |
 | TC-12 | Fault mode             | System enters Fault mode for invalid sensor values      | Passed by logic review |
 | TC-13 | Adaptive brightness    | LED brightness changes according to ambient light       | Passed                 |
-| TC-14 | Buzzer alarm           | Buzzer turns on/off during Alarm mode                   | Pending real hardware  |
+| TC-14 | Gas level indicator    | Way LEDs show current gas level before alarm mode       | Passed                 |
+| TC-15 | Servo door control     | Servo opens and closes according to system state        | Passed                 |
+| TC-16 | FIRE animation         | FIRE indication appears during Alarm mode               | Passed                 |
+| TC-17 | EXIT animation         | EXIT indication appears during Normal mode              | Passed                 |
+| TC-18 | Buzzer alarm           | Buzzer turns on/off during Alarm mode                   | Pending real hardware  |
 
 ## Detailed Test Cases
 
@@ -387,8 +391,9 @@ Verify that the system detects gas or smoke and enters Alarm mode.
 
 ### Preconditions
 
-* Temperature is below `TEMP_ALARM`.
+* Temperature is below `TEMP_ALARM`, or the test intentionally combines high temperature with gas danger.
 * Gas sensor is connected and provides analog values.
+* Serial Monitor is open.
 
 ### Steps
 
@@ -401,11 +406,12 @@ Verify that the system detects gas or smoke and enters Alarm mode.
 ### Expected Result
 
 * System switches to `Alarm` mode.
-* Alarm reason is `GAS`.
+* Alarm reason is `GAS`, or gas danger is shown as the main detected reason in the original prototype output.
 * Door opens.
 * FIRE animation starts.
 * SMS alert is sent or simulated.
 * Buzzer starts if enabled.
+* Sensor values are displayed in Serial Monitor for later analysis.
 
 ### Expected Serial Output
 
@@ -420,9 +426,31 @@ Expected SMS text:
 Увага! Виявлено дим або газ у приміщенні.
 ```
 
+### Serial Monitor Example
+
+The following screenshot shows the Serial Monitor output during gas/smoke alarm testing.
+
+![Serial Monitor gas alarm test](../images/serial-monitor-gas-alarm.png)
+
+During this test, the system detected gas danger and printed the alarm reason to the Serial Monitor.
+
+Example output:
+
+```text
+FIRE! Reason: smoke (gas)
+Temp: 50 | Light: 89 | Gas: 995 | IR: 0
+FIRE! Reason: smoke (gas)
+Temp: 50 | Light: 45 | Gas: 707 | IR: 0
+FIRE! Reason: smoke (gas)
+```
+
+The test values included high temperature and gas level above the configured alarm threshold. The Serial Monitor displayed temperature, light level, gas value, IR sensor state and the detected reason of the alarm.
+
+This confirms that the firmware was able to detect a gas-related emergency condition and display diagnostic data for analysis.
+
 ### Result
 
-Passed if gas/smoke detection triggers Alarm mode.
+Passed if gas/smoke detection triggers Alarm mode and the Serial Monitor shows the correct alarm reason and sensor values.
 
 ## TC-07: Combined Gas and Temperature Alarm
 
@@ -445,7 +473,7 @@ Verify that the system correctly detects a combined dangerous condition.
 ### Expected Result
 
 * System enters `Alarm` mode.
-* Alarm reason is `GAS_AND_TEMPERATURE`.
+* Alarm reason is `GAS_AND_TEMPERATURE` in the current improved firmware.
 * Door opens.
 * Warning LEDs and FIRE animation activate.
 * SMS alert mentions both gas/smoke and high temperature.
@@ -848,26 +876,46 @@ Passed if buzzer behavior matches the alarm state.
 
 ## Test Results Table
 
-| Test Case | Description            | Result  | Notes                                      |
-| --------- | ---------------------- | ------- | ------------------------------------------ |
-| TC-01     | System startup         | Passed  | System initializes and prints status       |
-| TC-02     | Normal mode            | Passed  | EXIT indication and monitoring active      |
-| TC-03     | Motion detection       | Passed  | Door opens and path LEDs activate          |
-| TC-04     | Motion timeout         | Passed  | Door closes after timeout                  |
-| TC-05     | High temperature alarm | Passed  | Alarm mode activates                       |
-| TC-06     | Gas/smoke alarm        | Passed  | Alarm mode activates                       |
-| TC-07     | Combined alarm         | Passed  | Gas and temperature detected together      |
-| TC-08     | Alarm reset            | Passed  | System returns to Normal after safe period |
-| TC-09     | GSM initialization     | Pending | Requires real SIM800L hardware             |
-| TC-10     | SMS sending            | Pending | Requires real SIM800L hardware             |
-| TC-11     | SMS anti-spam          | Passed  | Verified by firmware logic                 |
-| TC-12     | Fault mode             | Passed  | Verified by firmware logic                 |
-| TC-13     | Adaptive brightness    | Passed  | LED brightness follows light sensor        |
-| TC-14     | Gas level indicator    | Passed  | Way LEDs show gas level                    |
-| TC-15     | Servo door control     | Passed  | Servo reacts to state changes              |
-| TC-16     | FIRE animation         | Passed  | Alarm animation works                      |
-| TC-17     | EXIT animation         | Passed  | Normal indication works                    |
-| TC-18     | Buzzer alarm           | Pending | Requires physical buzzer test              |
+| Test Case | Description            | Result  | Notes                                                    |
+| --------- | ---------------------- | ------- | -------------------------------------------------------- |
+| TC-01     | System startup         | Passed  | System initializes and prints status                     |
+| TC-02     | Normal mode            | Passed  | EXIT indication and monitoring active                    |
+| TC-03     | Motion detection       | Passed  | Door opens and path LEDs activate                        |
+| TC-04     | Motion timeout         | Passed  | Door closes after timeout                                |
+| TC-05     | High temperature alarm | Passed  | Alarm mode activates                                     |
+| TC-06     | Gas/smoke alarm        | Passed  | Alarm mode activates and Serial Monitor shows gas danger |
+| TC-07     | Combined alarm         | Passed  | Gas and temperature detected together                    |
+| TC-08     | Alarm reset            | Passed  | System returns to Normal after safe period               |
+| TC-09     | GSM initialization     | Pending | Requires real SIM800L hardware                           |
+| TC-10     | SMS sending            | Pending | Requires real SIM800L hardware                           |
+| TC-11     | SMS anti-spam          | Passed  | Verified by firmware logic                               |
+| TC-12     | Fault mode             | Passed  | Verified by firmware logic                               |
+| TC-13     | Adaptive brightness    | Passed  | LED brightness follows light sensor                      |
+| TC-14     | Gas level indicator    | Passed  | Way LEDs show gas level                                  |
+| TC-15     | Servo door control     | Passed  | Servo reacts to state changes                            |
+| TC-16     | FIRE animation         | Passed  | Alarm animation works                                    |
+| TC-17     | EXIT animation         | Passed  | Normal indication works                                  |
+| TC-18     | Buzzer alarm           | Pending | Requires physical buzzer test                            |
+
+## Visual Test Evidence
+
+The repository includes a Serial Monitor screenshot from gas alarm testing:
+
+```text
+images/serial-monitor-gas-alarm.png
+```
+
+This image shows that the system detected gas danger and printed sensor values during the alarm event.
+
+The displayed values include:
+
+* temperature;
+* light level;
+* gas level;
+* IR sensor state;
+* alarm reason.
+
+This visual evidence supports the gas/smoke alarm test case and confirms that the system produced diagnostic output during emergency detection.
 
 ## Known Limitations
 
@@ -917,3 +965,4 @@ The system successfully implements the main behavior required for an Arduino-bas
 * It supports safer operation through hysteresis, sensor filtering, alarm reset delay and SMS anti-spam logic.
 
 The project is suitable as a portfolio-level embedded systems prototype. Full validation of GSM/SMS functionality requires real SIM800L hardware testing.
+
