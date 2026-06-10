@@ -26,8 +26,10 @@
 
 * [Overview](#overview)
 * [Project Highlights](#project-highlights)
+* [Key Features](#key-features)
 * [Prototype Layout](#prototype-layout)
 * [System Workflow](#system-workflow)
+* [GSM Notification Flow](#gsm-notification-flow)
 * [Testing Example](#testing-example)
 * [How It Works](#how-it-works)
 * [System Architecture](#system-architecture)
@@ -36,6 +38,7 @@
 * [Technologies Used](#technologies-used)
 * [Source Code](#source-code)
 * [Documentation](#documentation)
+* [Visual Materials](#visual-materials)
 * [Project Structure](#project-structure)
 * [Testing](#testing)
 * [GSM/SMS Logic](#gsmsms-logic)
@@ -79,6 +82,7 @@ The prototype monitors environmental conditions, detects dangerous events, activ
 | Diagnostics           | Serial Monitor status output                                    |
 | Architecture          | State-based firmware with Normal, Motion, Alarm and Fault modes |
 | Testing               | Tinkercad simulation and documented test scenarios              |
+| Documentation         | User guide, testing, hardware, architecture and thesis summary  |
 | Project type          | Bachelor's thesis prototype and GitHub portfolio project        |
 
 ---
@@ -102,6 +106,8 @@ The prototype monitors environmental conditions, detects dangerous events, activ
 * Fault mode for invalid sensor values
 * Tinkercad-based prototype testing
 * Detailed technical documentation
+* Original thesis workflow diagrams
+* Portfolio-ready repository structure
 
 ---
 
@@ -211,6 +217,10 @@ The firmware is based on a finite-state machine.
 
 This architecture makes the firmware easier to understand, test, debug and extend.
 
+More details are available in:
+
+[docs/firmware-architecture.md](docs/firmware-architecture.md)
+
 ---
 
 ## Hardware Components
@@ -272,9 +282,12 @@ This architecture makes the firmware easier to understand, test, debug and exten
 
 ## Source Code
 
-The main firmware is located here:
+The source code is located in the `src` folder.
 
-[`src/main.cpp`](src/main.cpp)
+| File                           | Description                  |
+| ------------------------------ | ---------------------------- |
+| [src/main.cpp](src/main.cpp)   | Main Arduino C++ firmware    |
+| [src/README.md](src/README.md) | Short source folder overview |
 
 The current firmware includes:
 
@@ -299,6 +312,8 @@ Detailed project documentation is available in the `docs` folder:
 
 | Document                                               | Description                                                                         |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| [Docs Overview](docs/README.md)                        | Short overview of all documentation files                                           |
+| [Project Description](docs/project-description.md)     | Portfolio-oriented explanation of the problem, solution, functionality and result   |
 | [User Guide](docs/user-guide.md)                       | Setup instructions, required components, pin configuration and usage guide          |
 | [Testing](docs/testing.md)                             | Test scenarios, expected results, visual evidence and validation notes              |
 | [Firmware Architecture](docs/firmware-architecture.md) | Internal code structure, system states, sensor processing and GSM logic             |
@@ -313,13 +328,32 @@ Additional schematic documentation:
 
 ---
 
+## Visual Materials
+
+The project includes visual materials from the thesis and testing process.
+
+| File                                        | Description                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------- |
+| `images/readme-banner.png`                  | Main README banner                                                   |
+| `images/system-workflow.png`                | Original system workflow diagram from the thesis documentation       |
+| `images/Warning-system-with-GSM.png`        | Original GSM notification flow diagram from the thesis documentation |
+| `images/serial-monitor-gas-alarm.png`       | Serial Monitor output during gas/smoke alarm testing                 |
+| `schematics/tinkercad-prototype-layout.png` | Original Tinkercad prototype wiring layout                           |
+
+Some diagrams contain Ukrainian labels because they were created as part of the original bachelor's thesis documentation. The repository documentation explains the same logic in English.
+
+---
+
 ## Project Structure
 
 ```text
 Warning-system-with-GSM/
 ├── src/
+│   ├── README.md
 │   └── main.cpp
 ├── docs/
+│   ├── README.md
+│   ├── project-description.md
 │   ├── user-guide.md
 │   ├── testing.md
 │   ├── firmware-architecture.md
@@ -329,6 +363,7 @@ Warning-system-with-GSM/
 │   ├── README.md
 │   └── tinkercad-prototype-layout.png
 ├── images/
+│   ├── README.md
 │   ├── readme-banner.png
 │   ├── Warning-system-with-GSM.png
 │   ├── serial-monitor-gas-alarm.png
