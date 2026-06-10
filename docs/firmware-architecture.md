@@ -2,7 +2,7 @@
 
 This document describes the internal firmware architecture of the Arduino-based emergency warning system with GSM notification support.
 
-The purpose of this document is to explain how the code is organized, how the system states work, how sensor values are processed, and how the firmware reacts to emergency conditions.
+The purpose of this document is to explain how the code is organized, how the system states work, how sensor values are processed, how the firmware reacts to emergency conditions, and how the original thesis workflow diagrams relate to the current source code.
 
 ## Firmware Location
 
@@ -20,23 +20,89 @@ Instead of placing all logic directly inside the `loop()` function, the system i
 
 This makes the firmware easier to:
 
-- understand;
-- test;
-- extend;
-- debug;
-- maintain;
-- present as a portfolio project.
+* understand;
+* test;
+* extend;
+* debug;
+* maintain;
+* present as a portfolio project.
+
+## Architecture Diagrams
+
+This repository includes original visual materials from the thesis project.
+
+Some diagrams contain Ukrainian labels because they were created as part of the original bachelor's thesis documentation. The English explanations below describe the same logic for portfolio and GitHub presentation.
+
+| Image                                | Description                                         |
+| ------------------------------------ | --------------------------------------------------- |
+| `images/system-workflow.png`         | Main workflow of the warning system                 |
+| `images/Warning-system-with-GSM.png` | GSM notification and message transmission algorithm |
+
+## Main System Workflow Diagram
+
+The following diagram shows the main operating logic of the warning system.
+
+![System workflow](../images/system-workflow.png)
+
+The diagram represents the general logic of the system:
+
+1. The system starts working.
+2. Sensor data is read.
+3. The firmware checks values from the temperature sensor, gas sensor, photoresistor and motion sensor.
+4. If danger is detected, the system opens the door, displays FIRE indication and activates red warning light.
+5. If no danger is detected, the firmware checks whether motion has been detected.
+6. If motion is detected, the system opens the door and displays motion indication.
+7. If no motion is detected, the system displays EXIT indication and activates LED backlight.
+8. After each action, the system returns to the main loop and continues monitoring.
+
+This diagram corresponds to the current firmware states:
+
+| Diagram Logic                           | Firmware State          |
+| --------------------------------------- | ----------------------- |
+| No danger detected                      | `Normal`                |
+| Motion detected                         | `Motion`                |
+| Gas, smoke or high temperature detected | `Alarm`                 |
+| Return to main cycle                    | Main `loop()` execution |
+
+## GSM Notification Flow Diagram
+
+The following diagram shows the original GSM notification algorithm from the thesis materials.
+
+![GSM notification flow](../images/Warning-system-with-GSM.png)
+
+The diagram describes how the system processes sensor data before sending a GSM notification:
+
+1. The system receives sensor data.
+2. The data is checked for validity.
+3. Invalid values are filtered or rejected.
+4. Valid data is compared with configured thresholds.
+5. If values do not exceed thresholds, the algorithm ends without sending an alert.
+6. If a dangerous condition is detected, the firmware prepares a confirmation or alert message.
+7. The message is encoded or formatted for GSM transmission.
+8. The message is sent through the GSM module.
+9. If sending is confirmed, the algorithm finishes.
+10. If sending fails, the system can repeat the transmission attempt.
+
+This logic is reflected in the current firmware through:
+
+* sensor reading functions;
+* sensor filtering;
+* alarm threshold checks;
+* GSM readiness checking;
+* SMS message preparation;
+* SMS sending;
+* SMS retry or repeat protection logic.
 
 ## Main System States
 
 The firmware uses the following system states:
 
-| State | Purpose |
-|---|---|
-| `Normal` | Default monitoring mode |
-| `Motion` | Motion detected near the emergency exit |
-| `Alarm` | Dangerous gas/smoke or temperature condition detected |
-| `Fault` | Invalid sensor values or sensor error condition detected |
+| State    | Purpose                                                  |
+| -------- | -------------------------------------------------------- |
+| `Normal` | Default monitoring mode                                  |
+| `Motion` | Motion detected near the emergency exit                  |
+| `Alarm`  | Dangerous gas/smoke or temperature condition detected    |
+| `Fault`  | Invalid sensor values or sensor error condition detected |
 
 These states are defined using an enum:
 
@@ -50,17 +116,17 @@ The firmware works as a finite-state machine.
 
 Basic state transitions:
 
-| Current State | Condition | Next State |
-|---|---|---|
-| `Normal` | Motion detected | `Motion` |
-| `Normal` | Gas or temperature alarm | `Alarm` |
-| `Normal` | Sensor error | `Fault` |
-| `Motion` | Gas or temperature alarm | `Alarm` |
-| `Motion` | Motion timeout expired | `Normal` |
-| `Motion` | Sensor error | `Fault` |
-| `Alarm` | Safe values are stable for reset time | `Normal` |
-| `Alarm` | Sensor error | `Fault` |
-| `Fault` | Sensor values become valid again | `Normal` |
+| Current State | Condition                             | Next State |
+| ------------- | ------------------------------------- | ---------- |
+| `Normal`      | Motion detected                       | `Motion`   |
+| `Normal`      | Gas or temperature alarm              | `Alarm`    |
+| `Normal`      | Sensor error                          | `Fault`    |
+| `Motion`      | Gas or temperature alarm              | `Alarm`    |
+| `Motion`      | Motion timeout expired                | `Normal`   |
+| `Motion`      | Sensor error                          | `Fault`    |
+| `Alarm`       | Safe values are stable for reset time | `Normal`   |
+| `Alarm`       | Sensor error                          | `Fault`    |
+| `Fault`       | Sensor values become valid again      | `Normal`   |
 
 ## Main Loop Structure
 
@@ -74,12 +140,12 @@ The main loop does not contain all system logic directly. Instead, it delegates 
 
 Main state handlers:
 
-| Function | Purpose |
-|---|---|
+| Function         | Purpose                      |
+| ---------------- | ---------------------------- |
 | `handleNormal()` | Handles Normal mode behavior |
 | `handleMotion()` | Handles Motion mode behavior |
-| `handleAlarm()` | Handles Alarm mode behavior |
-| `handleFault()` | Handles Fault mode behavior |
+| `handleAlarm()`  | Handles Alarm mode behavior  |
+| `handleFault()`  | Handles Fault mode behavior  |
 
 This separation makes the code cleaner and easier to modify.
 
@@ -91,12 +157,12 @@ Sensor values are stored in a structure:
 
 The structure contains:
 
-| Field | Meaning |
-|---|---|
-| `temp` | Current filtered temperature value |
-| `gas` | Current filtered gas/smoke sensor value |
-| `light` | Current filtered ambient light value |
-| `motion` | Current motion sensor state |
+| Field    | Meaning                                 |
+| -------- | --------------------------------------- |
+| `temp`   | Current filtered temperature value      |
+| `gas`    | Current filtered gas/smoke sensor value |
+| `light`  | Current filtered ambient light value    |
+| `motion` | Current motion sensor state             |
 
 Using a structure keeps all sensor data grouped in one logical object.
 
@@ -106,19 +172,19 @@ Sensor data is updated by the `readSensors()` function.
 
 This function reads:
 
-- temperature sensor;
-- gas sensor;
-- photoresistor;
-- IR motion sensor.
+* temperature sensor;
+* gas sensor;
+* photoresistor;
+* IR motion sensor.
 
 The firmware uses separate raw reading functions:
 
-| Function | Purpose |
-|---|---|
-| `readTemperatureRaw()` | Reads and converts TMP36 analog value to Celsius |
-| `readGasRaw()` | Reads gas sensor analog value |
-| `readLightRaw()` | Reads photoresistor value and maps it to brightness |
-| `readMotionRaw()` | Reads digital IR motion sensor state |
+| Function               | Purpose                                             |
+| ---------------------- | --------------------------------------------------- |
+| `readTemperatureRaw()` | Reads and converts TMP36 analog value to Celsius    |
+| `readGasRaw()`         | Reads gas sensor analog value                       |
+| `readLightRaw()`       | Reads photoresistor value and maps it to brightness |
+| `readMotionRaw()`      | Reads digital IR motion sensor state                |
 
 ## Sensor Filtering
 
@@ -132,12 +198,14 @@ This helps reduce sudden jumps caused by sensor noise.
 
 Filtered values are used for:
 
-- temperature alarm detection;
-- gas alarm detection;
-- adaptive LED brightness;
-- system diagnostics.
+* temperature alarm detection;
+* gas alarm detection;
+* adaptive LED brightness;
+* system diagnostics.
 
 This improves system stability and reduces false triggering.
+
+The GSM notification flow diagram also includes a data validation and filtering stage. In the current firmware, this concept is implemented through filtered sensor values and the `sensorErrorCondition()` check.
 
 ## Alarm Detection
 
@@ -149,8 +217,8 @@ The firmware uses the function:
 
 The alarm is triggered if at least one of the following conditions is true:
 
-- temperature is greater than or equal to `TEMP_ALARM`;
-- gas value is greater than or equal to `GAS_ALARM`.
+* temperature is greater than or equal to `TEMP_ALARM`;
+* gas value is greater than or equal to `GAS_ALARM`.
 
 ## Alarm Reasons
 
@@ -162,11 +230,11 @@ These are defined using:
 
 Possible alarm reasons:
 
-| Reason | Meaning |
-|---|---|
-| `None` | No alarm condition |
-| `Gas` | Gas or smoke value exceeded threshold |
-| `Temperature` | Temperature exceeded threshold |
+| Reason              | Meaning                                      |
+| ------------------- | -------------------------------------------- |
+| `None`              | No alarm condition                           |
+| `Gas`               | Gas or smoke value exceeded threshold        |
+| `Temperature`       | Temperature exceeded threshold               |
 | `GasAndTemperature` | Both gas and temperature exceeded thresholds |
 
 The function responsible for detecting the alarm reason is:
@@ -179,12 +247,12 @@ This allows the firmware to send different SMS messages depending on the detecte
 
 The firmware uses separate alarm and reset thresholds.
 
-| Constant | Value | Purpose |
-|---|---:|---|
-| `TEMP_ALARM` | 30 | Temperature value that activates Alarm mode |
-| `TEMP_RESET` | 27 | Temperature value required for reset |
-| `GAS_ALARM` | 500 | Gas value that activates Alarm mode |
-| `GAS_RESET` | 430 | Gas value required for reset |
+| Constant     | Value | Purpose                                     |
+| ------------ | ----: | ------------------------------------------- |
+| `TEMP_ALARM` |    30 | Temperature value that activates Alarm mode |
+| `TEMP_RESET` |    27 | Temperature value required for reset        |
+| `GAS_ALARM`  |   500 | Gas value that activates Alarm mode         |
+| `GAS_RESET`  |   430 | Gas value required for reset                |
 
 The reset thresholds are lower than alarm thresholds. This creates hysteresis.
 
@@ -196,10 +264,10 @@ Without hysteresis, the system could rapidly switch between states if the sensor
 
 Example:
 
-- Alarm starts at 30°C.
-- Alarm does not reset immediately at 29°C.
-- The temperature must fall to 27°C or lower.
-- The safe condition must remain stable for a configured time.
+* Alarm starts at 30°C.
+* Alarm does not reset immediately at 29°C.
+* The temperature must fall to 27°C or lower.
+* The safe condition must remain stable for a configured time.
 
 This makes the system more reliable.
 
@@ -211,8 +279,8 @@ The firmware uses the function:
 
 The system is considered safe only when:
 
-- temperature is less than or equal to `TEMP_RESET`;
-- gas value is less than or equal to `GAS_RESET`.
+* temperature is less than or equal to `TEMP_RESET`;
+* gas value is less than or equal to `GAS_RESET`.
 
 After this condition becomes true, the firmware waits for:
 
@@ -228,20 +296,22 @@ Normal mode is handled by:
 
 In Normal mode, the firmware:
 
-- updates the main luster LEDs;
-- displays EXIT indication;
-- displays gas level using way LEDs;
-- monitors all sensors;
-- keeps the door closed;
-- waits for motion or alarm conditions.
+* updates the main luster LEDs;
+* displays EXIT indication;
+* displays gas level using way LEDs;
+* monitors all sensors;
+* keeps the door closed;
+* waits for motion or alarm conditions.
 
 Possible transitions from Normal mode:
 
-| Condition | Transition |
-|---|---|
-| Motion detected | `Motion` |
-| Gas or temperature alarm detected | `Alarm` |
-| Sensor error detected | `Fault` |
+| Condition                         | Transition |
+| --------------------------------- | ---------- |
+| Motion detected                   | `Motion`   |
+| Gas or temperature alarm detected | `Alarm`    |
+| Sensor error detected             | `Fault`    |
+
+In the original workflow diagram, this corresponds to the branch where no danger is detected and the system displays EXIT indication.
 
 ## Motion Mode Behavior
 
@@ -251,10 +321,10 @@ Motion mode is handled by:
 
 In Motion mode, the firmware:
 
-- opens the servo-controlled door;
-- turns on way LEDs;
-- continues reading all sensors;
-- does not send SMS because motion alone is not treated as an emergency alarm.
+* opens the servo-controlled door;
+* turns on way LEDs;
+* continues reading all sensors;
+* does not send SMS because motion alone is not treated as an emergency alarm.
 
 If motion stops, the firmware waits for:
 
@@ -264,6 +334,8 @@ After this timeout, the door closes and the system returns to Normal mode.
 
 If gas or high temperature is detected during Motion mode, the system immediately switches to Alarm mode.
 
+In the original workflow diagram, this corresponds to the branch where motion is detected and the system opens the door and displays motion indication.
+
 ## Alarm Mode Behavior
 
 Alarm mode is handled by:
@@ -272,16 +344,18 @@ Alarm mode is handled by:
 
 In Alarm mode, the firmware:
 
-- opens the emergency door;
-- keeps the door open;
-- activates FIRE animation;
-- activates moving red way indication;
-- sets luster LEDs to maximum brightness;
-- activates buzzer alarm if enabled;
-- sends or simulates SMS alerts;
-- prints alarm reason to Serial Monitor.
+* opens the emergency door;
+* keeps the door open;
+* activates FIRE animation;
+* activates moving red way indication;
+* sets luster LEDs to maximum brightness;
+* activates buzzer alarm if enabled;
+* sends or simulates SMS alerts;
+* prints alarm reason to Serial Monitor.
 
 The system remains in Alarm mode until safe conditions are stable for the configured reset time.
+
+In the original workflow diagram, this corresponds to the branch where a dangerous condition is detected and the system opens the door, displays FIRE indication and activates red warning light.
 
 ## Fault Mode Behavior
 
@@ -293,13 +367,15 @@ Fault mode is used when sensor values are outside the expected operating range.
 
 In Fault mode, the firmware:
 
-- closes the door;
-- stops the buzzer;
-- disables normal alarm behavior;
-- blinks luster LEDs as a fault indication;
-- waits for sensor values to become valid again.
+* closes the door;
+* stops the buzzer;
+* disables normal alarm behavior;
+* blinks luster LEDs as a fault indication;
+* waits for sensor values to become valid again.
 
 When the sensor values return to the valid range, the system returns to Normal mode.
+
+The original thesis diagrams included the idea of filtering invalid data before making a decision. The current firmware expands this idea by adding a separate `Fault` state.
 
 ## Door Control
 
@@ -307,11 +383,11 @@ The servo motor represents the emergency door mechanism.
 
 Door control functions:
 
-| Function | Purpose |
-|---|---|
-| `openDoor()` | Opens the door if it is not already open |
-| `closeDoor()` | Closes the door if it is currently open |
-| `forceCloseDoor()` | Forces the door to the closed position |
+| Function           | Purpose                                  |
+| ------------------ | ---------------------------------------- |
+| `openDoor()`       | Opens the door if it is not already open |
+| `closeDoor()`      | Closes the door if it is currently open  |
+| `forceCloseDoor()` | Forces the door to the closed position   |
 
 The firmware stores the door state using:
 
@@ -323,11 +399,11 @@ This prevents unnecessary repeated servo commands.
 
 The project uses several NeoPixel groups.
 
-| LED Group | Purpose |
-|---|---|
-| Luster LEDs | Main room or warning lighting |
-| Way LEDs | Evacuation path and gas level indication |
-| Text line LEDs | EXIT and FIRE text indication |
+| LED Group      | Purpose                                  |
+| -------------- | ---------------------------------------- |
+| Luster LEDs    | Main room or warning lighting            |
+| Way LEDs       | Evacuation path and gas level indication |
+| Text line LEDs | EXIT and FIRE text indication            |
 
 The firmware stores text-line LED strips in an array:
 
@@ -445,14 +521,14 @@ The firmware checks the module using:
 
 The module is tested with several AT commands:
 
-| Command | Purpose |
-|---|---|
-| `AT` | Checks if the module responds |
-| `ATE0` | Disables command echo |
-| `AT+CMGF=1` | Enables SMS text mode |
-| `AT+CPIN?` | Checks SIM card status |
-| `AT+CSQ` | Checks signal quality |
-| `AT+CREG?` | Checks network registration |
+| Command     | Purpose                       |
+| ----------- | ----------------------------- |
+| `AT`        | Checks if the module responds |
+| `ATE0`      | Disables command echo         |
+| `AT+CMGF=1` | Enables SMS text mode         |
+| `AT+CPIN?`  | Checks SIM card status        |
+| `AT+CSQ`    | Checks signal quality         |
+| `AT+CREG?`  | Checks network registration   |
 
 If the module responds correctly, the firmware sets:
 
@@ -480,6 +556,8 @@ Gas and high temperature:
 
 `Увага! Виявлено дим або газ і високу температуру.`
 
+The GSM notification flow diagram represents this logic as message preparation, encoding, sending and confirmation.
+
 ## SMS Anti-Spam Protection
 
 The firmware includes SMS anti-spam protection.
@@ -498,18 +576,18 @@ The firmware uses `millis()`-based timing for most periodic tasks.
 
 Main timing constants:
 
-| Constant | Purpose |
-|---|---|
-| `SENSOR_INTERVAL` | Sensor reading interval |
-| `STATUS_INTERVAL` | Serial status printing interval |
-| `EXIT_INTERVAL` | EXIT animation update interval |
-| `GAS_INTERVAL` | Gas level indicator update interval |
-| `MOTION_HOLD_TIME` | Door hold time after motion stops |
+| Constant                  | Purpose                               |
+| ------------------------- | ------------------------------------- |
+| `SENSOR_INTERVAL`         | Sensor reading interval               |
+| `STATUS_INTERVAL`         | Serial status printing interval       |
+| `EXIT_INTERVAL`           | EXIT animation update interval        |
+| `GAS_INTERVAL`            | Gas level indicator update interval   |
+| `MOTION_HOLD_TIME`        | Door hold time after motion stops     |
 | `ALARM_STABLE_RESET_TIME` | Safe period before leaving Alarm mode |
-| `SMS_REPEAT_TIME` | Delay between repeated SMS messages |
-| `FIRE_FRAME_INTERVAL` | FIRE animation frame interval |
-| `FAULT_BLINK_INTERVAL` | Fault LED blinking interval |
-| `BUZZER_INTERVAL` | Buzzer toggle interval |
+| `SMS_REPEAT_TIME`         | Delay between repeated SMS messages   |
+| `FIRE_FRAME_INTERVAL`     | FIRE animation frame interval         |
+| `FAULT_BLINK_INTERVAL`    | Fault LED blinking interval           |
+| `BUZZER_INTERVAL`         | Buzzer toggle interval                |
 
 Using `millis()` allows the firmware to perform several tasks without fully blocking the main loop.
 
@@ -525,13 +603,13 @@ The main diagnostic function is:
 
 It prints:
 
-- current system state;
-- alarm reason;
-- temperature value;
-- gas value;
-- light value;
-- motion sensor state;
-- GSM readiness.
+* current system state;
+* alarm reason;
+* temperature value;
+* gas value;
+* light value;
+* motion sensor state;
+* GSM readiness.
 
 Example output:
 
@@ -549,31 +627,50 @@ This is important for Arduino UNO because it has limited SRAM.
 
 The arrays:
 
-- `TEXT_FIRE`
-- `TEXT_EXIT`
+* `TEXT_FIRE`
+* `TEXT_EXIT`
 
 are stored in flash memory instead of RAM.
 
 This improves memory usage and makes the firmware more suitable for Arduino UNO.
 
+## Relation Between Diagrams and Current Firmware
+
+The original diagrams were created during the thesis stage. The current GitHub firmware is an improved version of the prototype.
+
+| Thesis Diagram Concept         | Current Firmware Implementation                  |
+| ------------------------------ | ------------------------------------------------ |
+| Sensor data reading            | `readSensors()`                                  |
+| Data validation/filtering      | `smoothValue()` and `sensorErrorCondition()`     |
+| Threshold analysis             | `alarmCondition()` and `getAlarmReason()`        |
+| No danger branch               | `handleNormal()`                                 |
+| Motion branch                  | `handleMotion()`                                 |
+| Emergency branch               | `handleAlarm()`                                  |
+| GSM message preparation        | `sendSms()`                                      |
+| GSM confirmation/retry concept | GSM readiness checking and SMS repeat protection |
+| Main loop return               | Arduino `loop()` with state handlers             |
+
+The diagrams remain useful because they explain the original algorithmic idea behind the system, while the current firmware provides a more structured and extended implementation.
+
 ## Main Advantages of the Current Firmware
 
 The current firmware has several improvements compared to a simple prototype:
 
-- state-based architecture;
-- separated state handlers;
-- sensor smoothing;
-- alarm hysteresis;
-- stable alarm reset logic;
-- SMS anti-spam protection;
-- GSM readiness checking;
-- simulation mode for GSM;
-- buzzer support;
-- fault mode;
-- adaptive brightness;
-- animated EXIT and FIRE indication;
-- Serial Monitor diagnostics;
-- reduced RAM usage with PROGMEM.
+* state-based architecture;
+* separated state handlers;
+* sensor smoothing;
+* alarm hysteresis;
+* stable alarm reset logic;
+* SMS anti-spam protection;
+* GSM readiness checking;
+* simulation mode for GSM;
+* buzzer support;
+* fault mode;
+* adaptive brightness;
+* animated EXIT and FIRE indication;
+* Serial Monitor diagnostics;
+* reduced RAM usage with PROGMEM;
+* better relation between code and documented workflow diagrams.
 
 ## Possible Future Refactoring
 
@@ -581,16 +678,16 @@ The current project uses a single `main.cpp` file.
 
 For a larger version, the code could be split into several files:
 
-| File | Purpose |
-|---|---|
-| `config.h` | Thresholds, intervals and feature flags |
-| `pins.h` | Arduino pin configuration |
-| `text_patterns.h` | EXIT and FIRE LED patterns |
-| `sensors.h / sensors.cpp` | Sensor reading and filtering |
-| `display.h / display.cpp` | NeoPixel display logic |
-| `gsm.h / gsm.cpp` | GSM and SMS logic |
-| `door.h / door.cpp` | Servo door control |
-| `state_machine.h / state_machine.cpp` | System state logic |
+| File                                  | Purpose                                 |
+| ------------------------------------- | --------------------------------------- |
+| `config.h`                            | Thresholds, intervals and feature flags |
+| `pins.h`                              | Arduino pin configuration               |
+| `text_patterns.h`                     | EXIT and FIRE LED patterns              |
+| `sensors.h / sensors.cpp`             | Sensor reading and filtering            |
+| `display.h / display.cpp`             | NeoPixel display logic                  |
+| `gsm.h / gsm.cpp`                     | GSM and SMS logic                       |
+| `door.h / door.cpp`                   | Servo door control                      |
+| `state_machine.h / state_machine.cpp` | System state logic                      |
 
 This would make the firmware easier to scale, but for the current portfolio version, keeping the code in one file is acceptable and easier to review.
 
@@ -600,13 +697,14 @@ The firmware is structured as a compact embedded system with clear operating sta
 
 It demonstrates:
 
-- sensor-based monitoring;
-- state-machine programming;
-- emergency event handling;
-- servo control;
-- NeoPixel visual feedback;
-- GSM/SMS communication logic;
-- Serial Monitor diagnostics;
-- embedded system safety improvements.
+* sensor-based monitoring;
+* state-machine programming;
+* emergency event handling;
+* servo control;
+* NeoPixel visual feedback;
+* GSM/SMS communication logic;
+* Serial Monitor diagnostics;
+* embedded system safety improvements;
+* documented connection between thesis diagrams and firmware implementation.
 
 This architecture makes the project suitable for a portfolio as an Arduino, IoT and embedded systems prototype.
